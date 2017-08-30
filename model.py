@@ -4,19 +4,28 @@ import time
 import math
 from glob import glob
 import tensorflow as tf
+import tensorflow.contrib as tc
 import numpy as np
 from six.moves import xrange
 
 from ops import *
 from utils import *
 
+GAN = "GAN"
+WGAN = "WGAN"
+WGAN_GP = "WGAN_GP"
 
-class DCGAN(object):
-    def __init__(self, sess, input_height=108, input_width=108, crop=True,
+
+class UnifiedDCGAN(object):
+    def __init__(self, sess, model_type,
+                 input_height=108, input_width=108, crop=True,
                  batch_size=64, sample_num=64, output_height=64, output_width=64,
                  y_dim=None, z_dim=100, gf_dim=64, df_dim=64,
-                 gfc_dim=1024, dfc_dim=1024, c_dim=3, dataset_name='default',
-                 input_fname_pattern='*.jpg', checkpoint_dir=None, sample_dir=None):
+                 gfc_dim=1024, dfc_dim=1024, c_dim=3,
+                 d_clip_limit=0.01, d_iter=5, gp_lambda=10.,
+                 l1_regularizer_scale=None,  # 2.5e-5
+                 dataset_name='default', input_fname_pattern='*.jpg',
+                 checkpoint_dir=None, sample_dir=None):
         """
 
         Args:
@@ -30,6 +39,10 @@ class DCGAN(object):
           dfc_dim: (optional) Dimension of discrim units for fully connected layer. [1024]
           c_dim: (optional) Dimension of image color. For grayscale input, set to 1. [3]
         """
+        if model_type not in (GAN, WGAN, WGAN_GP):
+            raise ValueError("model_type should be one of: 'GAN', 'WGAN', 'WGAN_GP'.")
+
+        self.model_type = model_type
         self.sess = sess
         self.crop = crop
 
@@ -49,6 +62,11 @@ class DCGAN(object):
 
         self.gfc_dim = gfc_dim
         self.dfc_dim = dfc_dim
+
+        self.d_clip_limit = math.fabs(d_clip_limit)
+        self.d_iter = d_iter
+        self.l1_regularizer_scale = l1_regularizer_scale
+        self.gp_lambda = gp_lambda
 
         # batch normalization : deals with poor initialization helps gradient flow
         self.d_bn1 = batch_norm(name='d_bn1')
@@ -83,6 +101,9 @@ class DCGAN(object):
 
         self.build_model()
 
+    def summary(self):
+        pass
+
     def build_model(self):
         if self.y_dim:
             self.y = tf.placeholder(tf.float32, [self.batch_size, self.y_dim], name='y')
@@ -99,36 +120,76 @@ class DCGAN(object):
 
         inputs = self.inputs
 
-        self.z = tf.placeholder(
-            tf.float32, [None, self.z_dim], name='z')
+        ##############################
+        # Define the model structure
+
+        self.z = tf.placeholder(tf.float32, [None, self.z_dim], name='z')
         self.z_sum = histogram_summary("z", self.z)
 
         self.G = self.generator(self.z, self.y)
-        self.D, self.D_logits = self.discriminator(inputs, self.y, reuse=False)
         self.sampler = self.sampler(self.z, self.y)
+        self.D, self.D_logits = self.discriminator(inputs, self.y, reuse=False)
         self.D_, self.D_logits_ = self.discriminator(self.G, self.y, reuse=True)
 
         self.d_sum = histogram_summary("d", self.D)
         self.d__sum = histogram_summary("d_", self.D_)
         self.G_sum = image_summary("G", self.G)
 
-        def sigmoid_cross_entropy_with_logits(x, y):
-            try:
-                return tf.nn.sigmoid_cross_entropy_with_logits(logits=x, labels=y)
-            except:
-                return tf.nn.sigmoid_cross_entropy_with_logits(logits=x, targets=y)
+        ##############################
+        # Define loss function
 
-        self.d_loss_real = tf.reduce_mean(
-            sigmoid_cross_entropy_with_logits(self.D_logits, tf.ones_like(self.D)))
-        self.d_loss_fake = tf.reduce_mean(
-            sigmoid_cross_entropy_with_logits(self.D_logits_, tf.zeros_like(self.D_)))
-        self.g_loss = tf.reduce_mean(
-            sigmoid_cross_entropy_with_logits(self.D_logits_, tf.ones_like(self.D_)))
+        if self.model_type == GAN:
+            def cross_entropy(x, y):
+                try:
+                    return tf.nn.sigmoid_cross_entropy_with_logits(logits=x, labels=y)
+                except:
+                    return tf.nn.sigmoid_cross_entropy_with_logits(logits=x, targets=y)
+
+            self.d_loss_real = tf.reduce_mean(cross_entropy(self.D_logits, tf.ones_like(self.D)))
+            self.d_loss_fake = tf.reduce_mean(cross_entropy(self.D_logits_, tf.zeros_like(self.D_)))
+            self.d_loss = self.d_loss_real + self.d_loss_fake
+
+            self.g_loss = tf.reduce_mean(cross_entropy(self.D_logits_, tf.ones_like(self.D_)))
+
+        else:
+            # Define the loss function for Wasserstein GAN.
+            # D: minimize E_real[f(x)] - E_z[G(z)]
+            self.d_loss_real = tf.reduce_mean(self.D_logits)
+            self.d_loss_fake = tf.reduce_mean(self.D_logits_)
+            self.d_loss = tf.reduce_mean(self.D_logits_) - tf.reduce_mean(self.D_logits)
+
+            self.g_loss = - tf.reduce_mean(self.D_logits_)
+
+            if self.model_type == WGAN_GP:
+                # Wasserstein GAN with gradient penalty
+                epsilon = tf.random_uniform([self.batch_size, 1, 1, 1], 0.0, 1.0)
+                interpolated = epsilon * inputs + (1 - epsilon) * self.G
+                _, self.D_logits_intp_ = self.discriminator(interpolated, self.y, reuse=True)
+
+                # tf.gradients returns a list of sum(dy/dx) for each x in xs.
+                gradients = tf.gradients(self.D_logits_intp_, [interpolated, ], name="D_logits_intp")[0]
+                grad_l2 = tf.sqrt(tf.reduce_sum(tf.square(gradients), axis=[1, 2, 3]))
+                grad_penalty = tf.reduce_mean(tf.square(grad_l2 - 1.0))
+
+                self.gp_loss_sum = tf.summary.scalar("grad_penalty", grad_penalty)
+                self.grad_norm_sum = tf.summary.scalar("grad_norm", tf.nn.l2_loss(gradients))
+
+                # Add gradient penalty to the discriminator's loss function.
+                self.d_loss += self.gp_lambda * grad_penalty
+
+        # Add regularizer if asked.
+        if self.l1_regularizer_scale is not None:
+            self.reg = tc.layers.apply_regularization(
+                tc.layers.l1_regularizer(self.l1_regularizer_scale),
+                weights_list=[var for var in tf.global_variables() if 'weights' in var.name]
+            )
+            self.reg_summ = histogram_summary("reg", self.reg)
+
+            self.g_loss = self.g_loss + self.reg
+            self.d_loss = self.d_loss + self.reg
 
         self.d_loss_real_sum = scalar_summary("d_loss_real", self.d_loss_real)
         self.d_loss_fake_sum = scalar_summary("d_loss_fake", self.d_loss_fake)
-
-        self.d_loss = self.d_loss_real + self.d_loss_fake
 
         self.g_loss_sum = scalar_summary("g_loss", self.g_loss)
         self.d_loss_sum = scalar_summary("d_loss", self.d_loss)
@@ -141,19 +202,54 @@ class DCGAN(object):
         self.saver = tf.train.Saver()
 
     def train(self, config):
-        d_optim = tf.train.AdamOptimizer(config.learning_rate, beta1=config.beta1) \
-            .minimize(self.d_loss, var_list=self.d_vars)
-        g_optim = tf.train.AdamOptimizer(config.learning_rate, beta1=config.beta1) \
-            .minimize(self.g_loss, var_list=self.g_vars)
+
+        if self.model_type == GAN:
+            d_optim = tf.train.AdamOptimizer(config.learning_rate, beta1=config.beta1) \
+                .minimize(self.d_loss, var_list=self.d_vars)
+            g_optim = tf.train.AdamOptimizer(config.learning_rate, beta1=config.beta1) \
+                .minimize(self.g_loss, var_list=self.g_vars)
+
+        elif self.model_type == WGAN:
+            # Wasserstein GAN
+            d_optim = tf.train.RMSPropOptimizer(config.learning_rate, decay=config.beta1) \
+                .minimize(self.d_loss, var_list=self.d_vars)
+            g_optim = tf.train.RMSPropOptimizer(config.learning_rate, decay=config.beta1) \
+                .minimize(self.g_loss, var_list=self.g_vars)
+
+            # After every gradient update on the discriminator model, clamp its weights to a
+            # small fixed range, [-d_clip_limit, d_clip_limit].
+            d_clip = [v.assign(tf.clip_by_value(
+                v, -self.d_clip_limit, self.d_clip_limit)) for v in self.d_vars]
+
+            # Merge the clip operations on the discriminator's variables.
+            with tf.control_dependencies([d_optim]):
+                d_optim = tf.tuple(d_clip)
+
+        elif self.model_type == WGAN_GP:
+            d_optim = tf.train.AdamOptimizer(config.learning_rate, beta1=config.beta1, beta2=config.beta2) \
+                .minimize(self.d_loss, var_list=self.d_vars)
+            g_optim = tf.train.AdamOptimizer(config.learning_rate, beta1=config.beta1, beta2=config.beta2) \
+                .minimize(self.g_loss, var_list=self.g_vars)
+
         try:
             tf.global_variables_initializer().run()
         except:
             tf.initialize_all_variables().run()
 
-        self.g_sum = merge_summary([self.z_sum, self.d__sum,
-                                    self.G_sum, self.d_loss_fake_sum, self.g_loss_sum])
-        self.d_sum = merge_summary(
-            [self.z_sum, self.d_sum, self.d_loss_real_sum, self.d_loss_sum])
+        # Merge summary
+        g_sum_list = [self.z_sum, self.d__sum, self.G_sum, self.g_loss_sum, self.d_loss_fake_sum]
+        d_sum_list = [self.z_sum, self.d_sum, self.d_loss_sum, self.d_loss_real_sum]
+
+        if self.model_type in (WGAN, WGAN_GP) and self.l1_regularizer_scale is not None:
+            g_sum_list += [self.reg_summ]
+            d_sum_list += [self.reg_summ]
+
+        if self.model_type == WGAN_GP:
+            d_sum_list += [self.gp_loss_sum, self.grad_norm_sum]
+
+        self.g_sum = merge_summary(g_sum_list)
+        self.d_sum = merge_summary(d_sum_list)
+
         self.writer = SummaryWriter("./logs", self.sess.graph)
 
         sample_z = np.random.uniform(-1, 1, size=(self.sample_num, self.z_dim))
@@ -171,7 +267,7 @@ class DCGAN(object):
                           resize_width=self.output_width,
                           crop=self.crop,
                           grayscale=self.grayscale) for sample_file in sample_files]
-            if (self.grayscale):
+            if self.grayscale:
                 sample_inputs = np.array(sample).astype(np.float32)[:, :, :, None]
             else:
                 sample_inputs = np.array(sample).astype(np.float32)
@@ -179,12 +275,14 @@ class DCGAN(object):
         counter = 1
         start_time = time.time()
         could_load, checkpoint_counter = self.load(self.checkpoint_dir)
+
         if could_load:
             counter = checkpoint_counter
             print(" [*] Load SUCCESS")
         else:
             print(" [!] Load failed...")
 
+        # Start training!
         for epoch in xrange(config.epoch):
             if config.dataset == 'mnist':
                 batch_idxs = min(len(self.data_X), config.train_size) // config.batch_size
@@ -212,68 +310,78 @@ class DCGAN(object):
                     else:
                         batch_images = np.array(batch).astype(np.float32)
 
-                batch_z = np.random.uniform(-1, 1, [config.batch_size, self.z_dim]) \
-                    .astype(np.float32)
+                batch_z = np.random.uniform(-1, 1, [config.batch_size, self.z_dim]).astype(np.float32)
+
+                if self.model_type == GAN:
+                    _d_iters = 1
+                else:
+                    # For WGAN we can first train the D network to be very good.
+                    # During the first epoch, the D network is trained more for a warm start.
+                    # _d_iters = 100 if counter < 25 or np.mod(counter, 100) == 0 else self.d_iter
+                    _d_iters = 100 if counter < 10 or np.mod(counter, 50) == 0 else self.d_iter
 
                 if config.dataset == 'mnist':
-                    # Update D network
-                    _, summary_str = self.sess.run([d_optim, self.d_sum],
-                                                   feed_dict={
-                                                       self.inputs: batch_images,
-                                                       self.z: batch_z,
-                                                       self.y: batch_labels,
-                                                   })
-                    self.writer.add_summary(summary_str, counter)
-
-                    # Update G network
-                    _, summary_str = self.sess.run([g_optim, self.g_sum],
-                                                   feed_dict={
-                                                       self.z: batch_z,
-                                                       self.y: batch_labels,
-                                                   })
-                    self.writer.add_summary(summary_str, counter)
-
-                    # Run g_optim twice to make sure that d_loss does not go to zero (different from paper)
-                    _, summary_str = self.sess.run([g_optim, self.g_sum],
-                                                   feed_dict={self.z: batch_z, self.y: batch_labels})
-                    self.writer.add_summary(summary_str, counter)
-
-                    errD_fake = self.d_loss_fake.eval({
-                        self.z: batch_z,
-                        self.y: batch_labels
-                    })
-                    errD_real = self.d_loss_real.eval({
+                    d_train_feed_dict = {
                         self.inputs: batch_images,
-                        self.y: batch_labels
-                    })
-                    errG = self.g_loss.eval({
                         self.z: batch_z,
-                        self.y: batch_labels
-                    })
-                else:
+                        self.y: batch_labels,
+                    }
+
                     # Update D network
-                    _, summary_str = self.sess.run([d_optim, self.d_sum],
-                                                   feed_dict={self.inputs: batch_images, self.z: batch_z})
+                    for _ in range(_d_iters):
+                        self.sess.run(d_optim, feed_dict=d_train_feed_dict)
+
+                    summary_str = self.sess.run(self.d_sum, feed_dict=d_train_feed_dict)
                     self.writer.add_summary(summary_str, counter)
 
+                    g_train_feed_dict = {
+                        self.z: batch_z,
+                        self.y: batch_labels,
+                    }
+
                     # Update G network
-                    _, summary_str = self.sess.run([g_optim, self.g_sum],
-                                                   feed_dict={self.z: batch_z})
+                    _, summary_str = self.sess.run([g_optim, self.g_sum], feed_dict=g_train_feed_dict)
                     self.writer.add_summary(summary_str, counter)
 
                     # Run g_optim twice to make sure that d_loss does not go to zero (different from paper)
-                    _, summary_str = self.sess.run([g_optim, self.g_sum],
-                                                   feed_dict={self.z: batch_z})
+                    _, summary_str = self.sess.run([g_optim, self.g_sum], feed_dict=g_train_feed_dict)
                     self.writer.add_summary(summary_str, counter)
 
-                    errD_fake = self.d_loss_fake.eval({self.z: batch_z})
-                    errD_real = self.d_loss_real.eval({self.inputs: batch_images})
-                    errG = self.g_loss.eval({self.z: batch_z})
+                    errD_real = self.d_loss_real.eval(d_train_feed_dict)
+                    errD_fake = self.d_loss_fake.eval(g_train_feed_dict)
+                    errG = self.g_loss.eval(g_train_feed_dict)
+                else:
+
+                    d_train_feed_dict = {
+                        self.inputs: batch_images,
+                        self.z: batch_z,
+                    }
+
+                    # Update D network
+                    for _ in range(_d_iters):
+                        self.sess.run(d_optim, feed_dict=d_train_feed_dict)
+
+                    summary_str = self.sess.run(self.d_sum, feed_dict=d_train_feed_dict)
+                    self.writer.add_summary(summary_str, counter)
+
+                    g_train_feed_dict = {
+                        self.z: batch_z
+                    }
+                    # Update G network
+                    _, summary_str = self.sess.run([g_optim, self.g_sum], feed_dict=g_train_feed_dict)
+                    self.writer.add_summary(summary_str, counter)
+
+                    # Run g_optim twice to make sure that d_loss does not go to zero (different from paper)
+                    _, summary_str = self.sess.run([g_optim, self.g_sum], feed_dict=g_train_feed_dict)
+                    self.writer.add_summary(summary_str, counter)
+
+                    errD_real = self.d_loss_real.eval(d_train_feed_dict)
+                    errD_fake = self.d_loss_fake.eval(g_train_feed_dict)
+                    errG = self.g_loss.eval(g_train_feed_dict)
 
                 counter += 1
                 print("Epoch: [%2d] [%4d/%4d] time: %4.4f, d_loss: %.8f, g_loss: %.8f" \
-                      % (epoch, idx, batch_idxs,
-                         time.time() - start_time, errD_fake + errD_real, errG))
+                      % (epoch, idx, batch_idxs, time.time() - start_time, errD_fake + errD_real, errG))
 
                 if np.mod(counter, 100) == 1:
                     if config.dataset == 'mnist':

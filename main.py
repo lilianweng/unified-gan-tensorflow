@@ -1,13 +1,19 @@
+"""
+--model_type=GAN
+--model_type=WGAN --learning_rate=0.00005
+--model_type=WGAN_GP --learning_rate=0.0001 --beta1=0.5 --beta2=0.9
+"""
+
 import os
-import scipy.misc
 import numpy as np
 
-from model import DCGAN
+from model import UnifiedDCGAN
 from utils import pp, visualize, to_json, show_all_variables
 
 import tensorflow as tf
 
 flags = tf.app.flags
+flags.DEFINE_string("model_type", "GAN", "Type of GAN model to use. [GAN]")
 flags.DEFINE_integer("epoch", 25, "Epoch to train [25]")
 flags.DEFINE_float("learning_rate", 0.0002, "Learning rate of for adam [0.0002]")
 flags.DEFINE_float("beta1", 0.5, "Momentum term of adam [0.5]")
@@ -49,8 +55,9 @@ def main(_):
 
     with tf.Session(config=run_config) as sess:
         if FLAGS.dataset == 'mnist':
-            dcgan = DCGAN(
+            dcgan = UnifiedDCGAN(
                 sess,
+                FLAGS.model_type,
                 input_width=FLAGS.input_width,
                 input_height=FLAGS.input_height,
                 output_width=FLAGS.output_width,
@@ -64,8 +71,9 @@ def main(_):
                 checkpoint_dir=FLAGS.checkpoint_dir,
                 sample_dir=FLAGS.sample_dir)
         else:
-            dcgan = DCGAN(
+            dcgan = UnifiedDCGAN(
                 sess,
+                FLAGS.model_type,
                 input_width=FLAGS.input_width,
                 input_height=FLAGS.input_height,
                 output_width=FLAGS.output_width,
