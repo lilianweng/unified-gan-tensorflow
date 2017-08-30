@@ -1,0 +1,8 @@
+data/
+samples/
+checkpoint/
+logs/
+*~
+.DS_Store
+.ipynb_checkpoints
+.idea
