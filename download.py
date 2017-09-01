@@ -8,17 +8,17 @@ Downloads the following:
 """
 
 from __future__ import print_function
-import os
-import sys
-import gzip
-import json
-import shutil
-import zipfile
+
 import argparse
-import requests
+import json
+import os
 import subprocess
-from tqdm import tqdm
+import sys
+import zipfile
+
+import requests
 from six.moves import urllib
+from tqdm import tqdm
 
 parser = argparse.ArgumentParser(description='Download dataset for DCGAN.')
 parser.add_argument('datasets', metavar='N', type=str, nargs='+', choices=['celebA', 'lsun', 'mnist'],
@@ -45,8 +45,11 @@ def download(url, dirpath):
             print('', end='\r')
         downloaded += len(buf)
         f.write(buf)
-        status = (("[%-" + str(status_width + 1) + "s] %3.2f%%") %
-                  ('=' * int(float(downloaded) / filesize * status_width) + '>', downloaded * 100. / filesize))
+        status = (
+            ("[%-" + str(status_width + 1) + "s] %3.2f%%") % (
+                '=' * int(float(downloaded) / filesize * status_width) + '>',
+                downloaded * 100. / filesize)
+        )
         print(status, end='')
         sys.stdout.flush()
     f.close()
@@ -105,7 +108,6 @@ def download_celeb_a(dirpath):
     else:
         download_file_from_google_drive(drive_id, save_path)
 
-    zip_dir = ''
     with zipfile.ZipFile(save_path) as zf:
         zip_dir = zf.namelist()[0]
         zf.extractall(dirpath)

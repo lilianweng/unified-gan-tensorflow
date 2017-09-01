@@ -1,23 +1,6 @@
 import math
-import numpy as np
+
 import tensorflow as tf
-
-from tensorflow.python.framework import ops
-
-from utils import *
-
-try:
-    image_summary = tf.image_summary
-    scalar_summary = tf.scalar_summary
-    histogram_summary = tf.histogram_summary
-    merge_summary = tf.merge_summary
-    SummaryWriter = tf.train.SummaryWriter
-except:
-    image_summary = tf.summary.image
-    scalar_summary = tf.summary.scalar
-    histogram_summary = tf.summary.histogram
-    merge_summary = tf.summary.merge
-    SummaryWriter = tf.summary.FileWriter
 
 if "concat_v2" in dir(tf):
     def concat(tensors, axis, *args, **kwargs):
@@ -39,17 +22,23 @@ class batch_norm(object):
             self.name = name
 
     def __call__(self, x, train=True):
-        return tf.contrib.layers.batch_norm(x,
-                                            decay=self.momentum,
-                                            updates_collections=None,
-                                            epsilon=self.epsilon,
-                                            scale=True,
-                                            is_training=train,
-                                            scope=self.name)
+        return tf.contrib.layers.batch_norm(
+            x,
+            decay=self.momentum,
+            updates_collections=None,
+            epsilon=self.epsilon,
+            scale=True,
+            is_training=train,
+            scope=self.name
+        )
 
 
 def conv_cond_concat(x, y):
-    """Concatenate conditioning vector on feature map axis."""
+    """Concatenate conditioning vector on feature map axis.
+
+    Attach `y` to the channel level of `x`.
+    y.shape() is expected to be (batch_size, 1, 1, num_categories)
+    """
     x_shapes = x.get_shape()
     y_shapes = y.get_shape()
     return concat([
@@ -59,6 +48,23 @@ def conv_cond_concat(x, y):
 def conv2d(input_, output_dim,
            k_h=5, k_w=5, d_h=2, d_w=2, stddev=0.02,
            name="conv2d"):
+    """Apply convolution computation using a kernel of size (k_h, k_w) over the image
+    input_ with strides (1, d_h, d_w, 1) and SAME padding.
+
+    For example:
+        i = <input image size>, k = 5, s = 2, p = k // 2 = 2
+        o = (i + 2p - k) // 2 + 1 = (i - 1) // 2 + 1
+
+    Read more: https://arxiv.org/pdf/1603.07285.pdf
+               https://github.com/vdumoulin/conv_arithmetic
+
+    Returns a tensor of shape (
+        batch_size,
+        (input_image_height - 1) // 2 + 1,
+        (input_image_width - 1) // 2 + 1,
+        output_dim,
+    ).
+    """
     with tf.variable_scope(name):
         w = tf.get_variable('weights', [k_h, k_w, input_.get_shape()[-1], output_dim],
                             initializer=tf.truncated_normal_initializer(stddev=stddev))
@@ -73,6 +79,18 @@ def conv2d(input_, output_dim,
 def deconv2d(input_, output_shape,
              k_h=5, k_w=5, d_h=2, d_w=2, stddev=0.02,
              name="deconv2d", with_w=False):
+    """Apply transposed convolution computation using a kernel of size (k_h, k_w) over the
+    image input_ with strides (1, d_h, d_w, 1) and SAME padding.
+
+    Read more: https://github.com/vdumoulin/conv_arithmetic
+
+    Shapes:
+        (This is the k layer from ther last)
+        input_.shape = (batch_size, img_h // 2^k, img_w // 2^k, gf_dim * 2^k)
+        output_shape = (batch_size, img_h // 2^(k-1), img_w // 2^(k-1), gf_dim * 2^(k-1))
+        w.shape = (k_h, k_w, gf_dim * 2^(k-1), gf_dim * 2^k)
+        biases.shape = (gf_dim * 2^(k-1), )
+    """
     with tf.variable_scope(name):
         # filter : [height, width, output_channels, in_channels]
         w = tf.get_variable('weights', [k_h, k_w, output_shape[-1], input_.get_shape()[-1]],
@@ -97,10 +115,16 @@ def deconv2d(input_, output_shape,
 
 
 def lrelu(x, leak=0.2, name="lrelu"):
+    """ReLU layer"""
     return tf.maximum(x, leak * x)
 
 
 def linear(input_, output_size, scope=None, stddev=0.02, bias_start=0.0, with_w=False):
+    """Linear regression layer.
+
+    input_ (batch_size, dim) x matric (dim, output_dim) + biases (output_dim, )
+    Returns a tensor of shape (batch_size, output_size)
+    """
     shape = input_.get_shape().as_list()
 
     with tf.variable_scope(scope or "Linear"):
