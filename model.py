@@ -14,9 +14,7 @@ from ops import (batch_norm, concat, conv2d, conv_cond_concat, conv_out_size_sam
 from utils import (get_image, image_manifold_size, imread, load_mnist, save_images)
 
 
-
 class UnifiedDCGAN(object):
-
     # Three model types to choose from.
     GAN = "GAN"
     WGAN = "WGAN"
@@ -24,43 +22,48 @@ class UnifiedDCGAN(object):
 
     def __init__(self, sess, model_type,
                  input_height=108, input_width=108, crop=True,
-                 batch_size=64, sample_num=64, output_height=64, output_width=64,
+                 batch_size=64, sample_num=64,
+                 output_height=64, output_width=64,
                  y_dim=None, z_dim=100, gf_dim=64, df_dim=64,
-                 gfc_dim=1024, dfc_dim=1024, c_dim=3,
+                 gfc_dim=1024, dfc_dim=1024,
                  d_clip_limit=0.01, d_iter=5, gp_lambda=10.,
-                 l1_regularizer_scale=None,  # 2.5e-5
+                 l1_regularizer_scale=None,
                  dataset_name='default', input_fname_pattern='*.png',
                  checkpoint_dir=None, sample_dir=None):
         """
         Construct a model object.
 
         Args:
-          sess: TensorFlow session
-          model_type
-          input_height,
-          input_width
-          crop (bool)
-          batch_size: The size of batch. Should be specified before training.
-          sample_num
-          output_height
-          output_width
-          y_dim: (int) Dimension of dim for y. [None]
-          z_dim: (int) Dimension of dim for Z. [100]
-          gf_dim: (int) Dimension of gen filters in first conv layer. [64]
-          df_dim: (int) Dimension of discrim filters in first conv layer. [64]
-          gfc_dim: (int) Dimension of gen units for for fully connected layer. [1024]
-          dfc_dim: (int) Dimension of discrim units for fully connected layer. [1024]
-          c_dim: (int) Dimension of image color. For grayscale input, set to 1. [3]
+            sess (tf.Session object)
+            model_type (str)
 
-          d_clip_limit (float)
-          d_iter (int)
-          gp_lambda (float)
-          l1_regularizer_scale (float)
+            input_height (int)
+            input_width (int)
+            crop (bool): If True, crop the images in the center if the output size is smaller;
+                otherwise, resize.
+            batch_size (int): The size of batch. Should be specified before training.
+            sample_num (int): Num. images in one sample.
+            output_height (int)
+            output_width (int)
 
-          dataset_name
-          input_fname_pattern
-          checkpoint_dir
-          sample_dir
+            y_dim (int): Dimension of dim for y. [None]
+            z_dim (int): Dimension of dim for Z. [100]
+            gf_dim (int): Dimension of generator filters in first conv layer. [64]
+            df_dim (int): Dimension of discriminator filters in first conv layer. [64]
+            gfc_dim (int): Dimension of generator units for for fully connected layer. [1024]
+            dfc_dim (int): Dimension of discriminator units for fully connected layer. [1024]
+
+            d_clip_limit (float): When training "WGAN" model, the discriminator's variables are
+                clamped to the range of [-d_clip_limit, d_clip_limit] after every gradient update.
+            d_iter (int): Num. batches used for training D model in one iteration
+            gp_lambda (float): The penalty parameter for "WGAN_GP" model.
+            l1_regularizer_scale (float): If provided, add l1 regularizer on all trainable variables.
+
+            dataset_name (str): Other than 'mnist', other images should be from ./data/{dataset_name}
+                folder.
+            input_fname_pattern (str): Regex for matching the image file names.
+            checkpoint_dir (str): Folder name to save the model checkpoints.
+            sample_dir (str): Folder name to save the sample images.
         """
         if model_type not in (self.GAN, self.WGAN, self.WGAN_GP):
             raise ValueError("Unknown model_type: '%s'.", model_type)
@@ -95,20 +98,22 @@ class UnifiedDCGAN(object):
         self.input_fname_pattern = input_fname_pattern
 
         self.checkpoint_dir = os.path.join(checkpoint_dir, self.model_dir)
-        if not os.path.exists(checkpoint_dir):
-            os.makedirs(checkpoint_dir)
+        if not os.path.exists(self.checkpoint_dir):
+            os.makedirs(self.checkpoint_dir)
 
-        self.sample_dir = os.path.join(self.sample_dir, self.model_dir)
-        if not os.path.exists(sample_dir):
-            os.mkdir(sample_dir)
+        self.sample_dir = os.path.join(sample_dir, self.model_dir)
+        if not os.path.exists(self.sample_dir):
+            os.mkdir(self.sample_dir)
 
         self.load_dataset()
         self.build_model()
 
     def load_dataset(self):
-        # Load data and check the channel number.
+        """
+        Load data and check the channel number `c_dim`.
+        """
         if self.dataset_name == 'mnist':
-            self.data_X, self.data_y = load_mnist()
+            self.data_X, self.data_y = load_mnist(self.y_dim)
             self.c_dim = self.data_X[0].shape[-1]
         else:
             self.data = glob(os.path.join("./data", self.dataset_name, self.input_fname_pattern))
@@ -233,8 +238,7 @@ class UnifiedDCGAN(object):
         self.saver = tf.train.Saver()
 
     def get_next_batch_one_epoch(self, num_batches, config):
-        """
-        Yields next mini-batch's training data within one epoch.
+        """Yields next mini-batch within one epoch.
         """
         for idx in xrange(0, num_batches):
             batch_z = np.random.uniform(-1, 1, [config.batch_size, self.z_dim]).astype(np.float32)
@@ -268,8 +272,7 @@ class UnifiedDCGAN(object):
             yield idx, d_train_feed_dict, g_train_feed_dict
 
     def inf_get_next_batch(self, config):
-        """
-        Loop through batches with one epoch for an infinite number of epoches.
+        """Loop through batches for infinite epoches.
         """
         if config.dataset == 'mnist':
             num_batches = min(len(self.data_X), config.train_size) // config.batch_size
@@ -285,8 +288,8 @@ class UnifiedDCGAN(object):
                 yield epoch, step, d_train_feed_dict, g_train_feed_dict
 
     def get_sample_data(self, config):
-        """
-        Set up the sample images.
+        """Set up the inputs and labels of sample images.
+        Samples are created periodically during training.
         """
         if config.dataset == 'mnist':
             sample_inputs = self.data_X[0:self.sample_num]
@@ -318,6 +321,8 @@ class UnifiedDCGAN(object):
         return sample_feed_dict
 
     def train(self, config):
+        """Train the model!
+        """
         d_clip = None
 
         ##############################
@@ -349,23 +354,20 @@ class UnifiedDCGAN(object):
         tf.global_variables_initializer().run()
 
         # Merge summary
-        """
         g_sum_list = [self.z_sum, self.d__sum, self.G_sum, self.g_loss_sum, self.d_loss_fake_sum]
         d_sum_list = [self.z_sum, self.d_sum, self.inputs_sum, self.d_loss_sum, self.d_loss_real_sum]
 
-        if self.model_type in (WGAN, WGAN_GP) and self.l1_regularizer_scale is not None:
+        if self.model_type in (self.WGAN, self.WGAN_GP) and self.l1_regularizer_scale is not None:
             g_sum_list += [self.reg_summ]
             d_sum_list += [self.reg_summ]
 
-        if self.model_type == WGAN_GP:
+        if self.model_type == self.WGAN_GP:
             d_sum_list += [self.gp_loss_sum, self.grad_norm_sum]
 
         self.g_sum = tf.summary.merge(g_sum_list)
         self.d_sum = tf.summary.merge(d_sum_list)
-        """
 
         self.writer = tf.summary.FileWriter(os.path.join("./logs", self.model_dir), self.sess.graph)
-        merged_sum = tf.summary.merge_all()
 
         # Set up the sample images
         sample_feed_dict = self.get_sample_data(config)
@@ -392,11 +394,12 @@ class UnifiedDCGAN(object):
         inf_data_gen = self.inf_get_next_batch(config)
 
         for iter_count in xrange(config.max_iter):
-            if self.model_type == GAN:
+            if self.model_type == self.GAN:
                 _d_iters = 1
             else:
-                # For WGAN we can first train the D network to be very good.
-                # During the first epoch, the D network is trained more for a warm start.
+                # For WGAN or WGAN_GP model, we are allowed to train the D network to be very good at
+                # the beginning as a warm start. Because theoretically Wasserstain distance does not
+                # suffer the vanishing gradient dilemma that vanila GAN is facing.
                 _d_iters = 100 if iter_count < 25 or np.mod(iter_count, 500) == 0 else self.d_iter
 
             # Update D network
@@ -408,12 +411,12 @@ class UnifiedDCGAN(object):
                 if d_clip is not None:
                     self.sess.run(d_clip)
 
-            summary_str = self.sess.run(merged_sum, feed_dict=d_train_feed_dict)
+            summary_str = self.sess.run(self.d_sum, feed_dict=d_train_feed_dict)
             self.writer.add_summary(summary_str, iter_count)
 
             # Update G network
             g_counter += 1
-            _, summary_str = self.sess.run([g_optim, merged_sum], feed_dict=g_train_feed_dict)
+            _, summary_str = self.sess.run([g_optim, self.g_sum], feed_dict=g_train_feed_dict)
             self.writer.add_summary(summary_str, iter_count)
 
             d_err = self.d_loss.eval(d_train_feed_dict)
@@ -437,6 +440,8 @@ class UnifiedDCGAN(object):
                 self.save(counter)
 
     def discriminator(self, image, y=None, reuse=False):
+        """Defines the D network structure.
+        """
         with tf.variable_scope("discriminator") as scope:
             if reuse:
                 scope.reuse_variables()
@@ -468,6 +473,8 @@ class UnifiedDCGAN(object):
                 return tf.nn.sigmoid(h3), h3
 
     def generator(self, z, y=None):
+        """Defines the G network structure.
+        """
         with tf.variable_scope("generator") as scope:
             if not self.y_dim:
                 s_h, s_w = self.output_height, self.output_width
@@ -528,6 +535,8 @@ class UnifiedDCGAN(object):
                     deconv2d(h2, [self.batch_size, s_h, s_w, self.c_dim], name='g_h3'))
 
     def sampler(self, z, y=None):
+        """TODO: merge this with self.generator()?
+        """
         with tf.variable_scope("generator") as scope:
             scope.reuse_variables()
 

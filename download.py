@@ -1,4 +1,6 @@
 """
+Same as https://github.com/carpedm20/DCGAN-tensorflow/blob/master/download.py
+
 Modification of https://github.com/stanfordnlp/treelstm/blob/master/scripts/download.py
 
 Downloads the following:
@@ -15,7 +17,6 @@ import os
 import subprocess
 import sys
 import zipfile
-
 import requests
 from six.moves import urllib
 from tqdm import tqdm

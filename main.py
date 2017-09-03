@@ -1,16 +1,17 @@
 """
-Suggested configs:
+Recommendeds configs:
 
 --model_type=GAN --learning_rate=0.0002
 --model_type=WGAN --learning_rate=0.00005 --beta1=0.9
 --model_type=WGAN_GP --learning_rate=0.0001 --beta1=0.5 --beta2=0.9
 """
 
-import os
 import numpy as np
+import os
+import pprint
 
 from model import UnifiedDCGAN
-from utils import pp, show_all_variables
+from utils import show_all_variables
 
 import tensorflow as tf
 
@@ -37,15 +38,14 @@ flags.DEFINE_boolean("train", False, "True for training, False for testing [Fals
 flags.DEFINE_boolean("crop", False, "True for training, False for testing [False]")
 
 FLAGS = flags.FLAGS
+pp = pprint.PrettyPrinter()
 
 
 def main(_):
     pp.pprint(flags.FLAGS.__flags)
 
-    if FLAGS.input_width is None:
-        FLAGS.input_width = FLAGS.input_height
-    if FLAGS.output_width is None:
-        FLAGS.output_width = FLAGS.output_height
+    FLAGS.input_width = FLAGS.input_width or FLAGS.input_height
+    FLAGS.output_width = FLAGS.output_width or FLAGS.output_height
 
     if not os.path.exists(FLAGS.checkpoint_dir):
         os.makedirs(FLAGS.checkpoint_dir)
@@ -58,7 +58,7 @@ def main(_):
 
     with tf.Session(config=run_config) as sess:
         if FLAGS.dataset == 'mnist':
-            dcgan = UnifiedDCGAN(
+            model = UnifiedDCGAN(
                 sess,
                 FLAGS.model_type,
                 input_width=FLAGS.input_width,
@@ -75,7 +75,7 @@ def main(_):
                 checkpoint_dir=FLAGS.checkpoint_dir,
                 sample_dir=FLAGS.sample_dir)
         else:
-            dcgan = UnifiedDCGAN(
+            model = UnifiedDCGAN(
                 sess,
                 FLAGS.model_type,
                 input_width=FLAGS.input_width,
@@ -94,9 +94,9 @@ def main(_):
         show_all_variables()
 
         if FLAGS.train:
-            dcgan.train(FLAGS)
+            model.train(FLAGS)
         else:
-            if not dcgan.load(FLAGS.checkpoint_dir)[0]:
+            if not model.load(FLAGS.checkpoint_dir)[0]:
                 raise Exception("[!] Train a model first, then run test mode")
 
 
