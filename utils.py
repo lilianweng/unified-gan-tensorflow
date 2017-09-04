@@ -127,3 +127,12 @@ def load_mnist(y_dim):
         y_vec[i, y[i]] = 1.0
 
     return X / 255., y_vec
+
+
+def make_gif(img_path, img_fname_pattern='*.png'):
+    from imageio import imread, mimsave
+    from glob import glob
+    file_names = sorted(glob(os.path.join(img_path, img_fname_pattern)))
+    print file_names
+    images = [imread(fn) for fn in file_names]
+    mimsave(os.path.join(img_path, "merged.gif"), images, duration=0.3)

@@ -3,6 +3,7 @@ samples/
 checkpoint/
 logs/
 *~
+*.pyc
 .DS_Store
 .ipynb_checkpoints
 .idea
