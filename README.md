@@ -33,16 +33,8 @@ If you are interested in the math behind the loss functions of GAN and WGAN, rea
 ### Test Runs:
 
 ```
-python main.py --dataset=mnist --model_type=GAN --batch_size=64 --input_height=28 --output_height=28 --max_iter=10000 --learning_rate=0.0002 --train
+(left) python main.py --dataset=mnist --model_type=GAN --batch_size=64 --input_height=28 --output_height=28 --max_iter=10000 --learning_rate=0.0002 --train
+(middle) python main.py --dataset=mnist --model_type=WGAN --batch_size=64 --input_height=28 --output_height=28 --d_iter=5 --max_iter=10000 --learning_rate=0.00005 --train
+(right) python main.py --dataset=mnist --model_type=WGAN_GP --batch_size=64 --input_height=28 --output_height=28 --d_iter=5 --max_iter=10000 --learning_rate=0.0001 --train
 ```
-![](demos/mnist_GAN.gif "GAN on mnist")
-
-```
-python main.py --dataset=mnist --model_type=WGAN --batch_size=64 --input_height=28 --output_height=28 --d_iter=5 --max_iter=10000 --learning_rate=0.00005 --train
-```
-![](demos/mnist_WGAN.gif "WGAN on mnist")
-
-```
-python main.py --dataset=mnist --model_type=WGAN_GP --batch_size=64 --input_height=28 --output_height=28 --d_iter=5 --max_iter=10000 --learning_rate=0.0001 --train
-```
-![](demos/mnist_WGAN_GP.gif "WGAN with gradient penalty on mnist")
+![](demos/mnist_GAN.gif "GAN on mnist")&nbsp;![](demos/mnist_WGAN.gif "WGAN on mnist")&nbsp;![](demos/mnist_WGAN_GP.gif "WGAN with gradient penalty on mnist")
