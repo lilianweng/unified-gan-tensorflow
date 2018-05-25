@@ -1,17 +1,15 @@
 """
-Same as https://github.com/carpedm20/DCGAN-tensorflow/blob/master/download.py
-
-Modification of https://github.com/stanfordnlp/treelstm/blob/master/scripts/download.py
-
-Downloads the following:
-- Celeb-A dataset
-- LSUN dataset
-- MNIST dataset
+Modified version of https://github.com/carpedm20/DCGAN-tensorflow/blob/master/download.py
+Downloads the following datasets:
+- Celeb-A
+- LSUN
+- MNIST
+- Fashion MNIST
 """
 
 from __future__ import print_function
 
-import argparse
+import click
 import json
 import os
 import subprocess
@@ -20,10 +18,6 @@ import zipfile
 import requests
 from six.moves import urllib
 from tqdm import tqdm
-
-parser = argparse.ArgumentParser(description='Download dataset for DCGAN.')
-parser.add_argument('datasets', metavar='N', type=str, nargs='+', choices=['celebA', 'lsun', 'mnist'],
-                    help='name of dataset to download [celebA, lsun, mnist]')
 
 
 def download(url, dirpath):
@@ -47,9 +41,9 @@ def download(url, dirpath):
         downloaded += len(buf)
         f.write(buf)
         status = (
-            ("[%-" + str(status_width + 1) + "s] %3.2f%%") % (
-                '=' * int(float(downloaded) / filesize * status_width) + '>',
-                downloaded * 100. / filesize)
+                ("[%-" + str(status_width + 1) + "s] %3.2f%%") % (
+            '=' * int(float(downloaded) / filesize * status_width) + '>',
+            downloaded * 100. / filesize)
         )
         print(status, end='')
         sys.stdout.flush()
@@ -154,42 +148,60 @@ def download_lsun(dirpath):
     _download_lsun(data_dir, '', 'test', tag)
 
 
-def download_mnist(dirpath):
-    data_dir = os.path.join(dirpath, 'mnist')
-    if os.path.exists(data_dir):
-        print('Found MNIST - skip')
-        return
-    else:
-        os.mkdir(data_dir)
-    url_base = 'http://yann.lecun.com/exdb/mnist/'
-    file_names = ['train-images-idx3-ubyte.gz',
-                  'train-labels-idx1-ubyte.gz',
-                  't10k-images-idx3-ubyte.gz',
-                  't10k-labels-idx1-ubyte.gz']
+def download_dataset_from_url(data_dir, url_base, file_names):
     for file_name in file_names:
-        url = (url_base + file_name).format(**locals())
-        print(url)
+        url = url_base.format(file_name)
         out_path = os.path.join(data_dir, file_name)
         cmd = ['curl', url, '-o', out_path]
-        print('Downloading ', file_name)
-        subprocess.call(cmd)
-        cmd = ['gzip', '-d', out_path]
-        print('Decompressing ', file_name)
+        click.secho('Downloading ... ' + url, fg='green')
         subprocess.call(cmd)
 
 
-def prepare_data_dir(path='./data'):
-    if not os.path.exists(path):
-        os.mkdir(path)
+def prepare_dataset_dir(dataset_name, base_path='./data'):
+    data_dir = os.path.join(base_path, dataset_name)
+    if not os.path.exists(data_dir):
+        os.makedirs(data_dir, exist_ok=True)
+    elif click.confirm("Overwrite %s?" % data_dir, abort=True):
+        print("Continue downloading files to", data_dir)
+    else:
+        sys.exit(0)
+
+    return data_dir
+
+
+VALID_DATASETS = ['celebA', 'lsun', 'mnist', 'fashion-mnist']
+
+
+@click.command()
+@click.argument('name', nargs=1, type=click.Choice(VALID_DATASETS))
+def main(name):
+    """
+    The input dataset 'name' should be one of:
+        ['celebA', 'lsun', 'mnist', 'fashion-mnist']
+    """
+    assert name in ['celebA', 'lsun', 'mnist', 'fashion-mnist']
+    data_dir = prepare_dataset_dir(name)
+
+    if name == 'celebA':
+        download_celeb_a('./data')
+    elif name == 'lsun':
+        download_lsun('./data')
+    elif name == 'mnist':
+        url_base = 'http://yann.lecun.com/exdb/mnist/{}'
+        file_names = ['train-images-idx3-ubyte.gz',
+                      'train-labels-idx1-ubyte.gz',
+                      't10k-images-idx3-ubyte.gz',
+                      't10k-labels-idx1-ubyte.gz']
+        download_dataset_from_url(data_dir, url_base, file_names)
+    elif name == 'fashion-mnist':
+        url_base = 'https://github.com/zalandoresearch/fashion-mnist/blob/master/data/' \
+                   'fashion/{}?raw=true'
+        file_names = ['train-images-idx3-ubyte.gz',
+                      'train-labels-idx1-ubyte.gz',
+                      't10k-images-idx3-ubyte.gz',
+                      't10k-labels-idx1-ubyte.gz']
+        download_dataset_from_url(data_dir, url_base, file_names)
 
 
 if __name__ == '__main__':
-    args = parser.parse_args()
-    prepare_data_dir()
-
-    if any(name in args.datasets for name in ['CelebA', 'celebA', 'celebA']):
-        download_celeb_a('./data')
-    if 'lsun' in args.datasets:
-        download_lsun('./data')
-    if 'mnist' in args.datasets:
-        download_mnist('./data')
+    main()
