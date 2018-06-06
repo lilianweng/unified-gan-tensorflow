@@ -3,6 +3,12 @@ From: https://github.com/carpedm20/DCGAN-tensorflow/blob/master/ops.py
 """
 import math
 import tensorflow as tf
+import tensorflow.contrib.slim as slim
+
+
+def show_all_variables():
+    model_vars = tf.trainable_variables()
+    slim.model_analyzer.analyze_vars(model_vars, print_info=True)
 
 
 if "concat_v2" in dir(tf):

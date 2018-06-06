@@ -2,17 +2,12 @@
 From: https://github.com/carpedm20/DCGAN-tensorflow/blob/master/utils.py
 Some codes from https://github.com/Newmu/dcgan_code
 """
-from __future__ import division
+from __future__ import division, print_function
 import os
 import numpy as np
 import scipy.misc
-import tensorflow as tf
-import tensorflow.contrib.slim as slim
 
-
-def show_all_variables():
-    model_vars = tf.trainable_variables()
-    slim.model_analyzer.analyze_vars(model_vars, print_info=True)
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 
 
 def imread(path, grayscale=False):
@@ -91,48 +86,10 @@ def image_manifold_size(num_images):
     return manifold_h, manifold_w
 
 
-def load_mnist(y_dim):
-    data_dir = "./data/mnist"
-
-    fd = open(os.path.join(data_dir, 'train-images-idx3-ubyte'))
-    loaded = np.fromfile(file=fd, dtype=np.uint8)
-    trX = loaded[16:].reshape((60000, 28, 28, 1)).astype(np.float)
-
-    fd = open(os.path.join(data_dir, 'train-labels-idx1-ubyte'))
-    loaded = np.fromfile(file=fd, dtype=np.uint8)
-    trY = loaded[8:].reshape((60000)).astype(np.float)
-
-    fd = open(os.path.join(data_dir, 't10k-images-idx3-ubyte'))
-    loaded = np.fromfile(file=fd, dtype=np.uint8)
-    teX = loaded[16:].reshape((10000, 28, 28, 1)).astype(np.float)
-
-    fd = open(os.path.join(data_dir, 't10k-labels-idx1-ubyte'))
-    loaded = np.fromfile(file=fd, dtype=np.uint8)
-    teY = loaded[8:].reshape((10000)).astype(np.float)
-
-    trY = np.asarray(trY)
-    teY = np.asarray(teY)
-
-    X = np.concatenate((trX, teX), axis=0)
-    y = np.concatenate((trY, teY), axis=0).astype(np.int)
-
-    seed = 547
-    np.random.seed(seed)
-    np.random.shuffle(X)
-    np.random.seed(seed)
-    np.random.shuffle(y)
-
-    y_vec = np.zeros((len(y), y_dim), dtype=np.float)
-    for i, label in enumerate(y):
-        y_vec[i, y[i]] = 1.0
-
-    return X / 255., y_vec
-
-
 def make_gif(img_path, img_fname_pattern='*.png'):
     from imageio import imread, mimsave
     from glob import glob
     file_names = sorted(glob(os.path.join(img_path, img_fname_pattern)))
-    print file_names
+    print(file_names)
     images = [imread(fn) for fn in file_names]
     mimsave(os.path.join(img_path, "merged.gif"), images, duration=0.3)

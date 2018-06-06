@@ -148,9 +148,9 @@ def download_lsun(dirpath):
     _download_lsun(data_dir, '', 'test', tag)
 
 
-def download_dataset_from_url(data_dir, url_base, file_names):
+def download_dataset_from_url(data_dir, url_fmt, file_names):
     for file_name in file_names:
-        url = url_base.format(file_name)
+        url = url_fmt.format(file_name)
         out_path = os.path.join(data_dir, file_name)
         cmd = ['curl', url, '-o', out_path]
         click.secho('Downloading ... ' + url, fg='green')
@@ -187,20 +187,19 @@ def main(name):
     elif name == 'lsun':
         download_lsun('./data')
     elif name == 'mnist':
-        url_base = 'http://yann.lecun.com/exdb/mnist/{}'
+        url_fmt = 'http://yann.lecun.com/exdb/mnist/{}'
         file_names = ['train-images-idx3-ubyte.gz',
                       'train-labels-idx1-ubyte.gz',
                       't10k-images-idx3-ubyte.gz',
                       't10k-labels-idx1-ubyte.gz']
-        download_dataset_from_url(data_dir, url_base, file_names)
+        download_dataset_from_url(data_dir, url_fmt, file_names)
     elif name == 'fashion-mnist':
-        url_base = 'https://github.com/zalandoresearch/fashion-mnist/blob/master/data/' \
-                   'fashion/{}?raw=true'
+        url_fmt = 'http://fashion-mnist.s3-website.eu-central-1.amazonaws.com/{}'
         file_names = ['train-images-idx3-ubyte.gz',
                       'train-labels-idx1-ubyte.gz',
                       't10k-images-idx3-ubyte.gz',
                       't10k-labels-idx1-ubyte.gz']
-        download_dataset_from_url(data_dir, url_base, file_names)
+        download_dataset_from_url(data_dir, url_fmt, file_names)
 
 
 if __name__ == '__main__':

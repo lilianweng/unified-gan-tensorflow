@@ -7,3 +7,4 @@ logs/
 .DS_Store
 .ipynb_checkpoints
 .idea
+*.egg-info/
