@@ -1,0 +1,3 @@
+[
+  "gan/tests/test_dataset.py::test_dataset"
+]

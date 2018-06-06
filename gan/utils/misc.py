@@ -3,11 +3,23 @@ From: https://github.com/carpedm20/DCGAN-tensorflow/blob/master/utils.py
 Some codes from https://github.com/Newmu/dcgan_code
 """
 from __future__ import division, print_function
+
 import os
+import random
+import time
+
 import numpy as np
 import scipy.misc
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+
+
+def shuffling(*lst):
+    # `lst` is a list of list.
+    seed = int(time.time())
+    for vals in lst:
+        random.seed(seed)
+        random.shuffle(vals)  # shuffle in place.
 
 
 def imread(path, grayscale=False):

@@ -5,6 +5,7 @@ Downloads the following datasets:
 - LSUN
 - MNIST
 - Fashion MNIST
+- Pokemon
 """
 
 from __future__ import print_function
@@ -200,6 +201,8 @@ def main(name):
                       't10k-images-idx3-ubyte.gz',
                       't10k-labels-idx1-ubyte.gz']
         download_dataset_from_url(data_dir, url_fmt, file_names)
+    elif name == 'pokemon':
+        pass
 
 
 if __name__ == '__main__':
