@@ -20,7 +20,8 @@ class UnifiedDCGANModel(BaseModel):
                  batch_size=64, sample_num=64,
                  z_dim=100, gf_dim=64, df_dim=64,
                  gfc_dim=1024, dfc_dim=1024,
-                 d_clip_limit=0.01, d_iter=5, gp_lambda=10., l2_reg_scale=None,
+                 d_clip_limit=0.01, d_iter=5,
+                 gp_lambda=10., l2_reg_scale=None,
                  checkpoint_dir='checkpoints', sample_dir='samples'):
         """
         Construct a model object.
@@ -286,16 +287,11 @@ class UnifiedDCGANModel(BaseModel):
         z = tf.concat([z, y], 1)
 
         h0 = linear(z, self.gfc_dim, name='g_lin_h0', batch_norm=True, activation_fn=tf.nn.relu)
-        print('z', z.get_shape())
-        print('h0', h0.get_shape())
-        print('y', y.get_shape())
         h0 = tf.concat([h0, y], 1)
 
         h1 = linear(h0, self.gf_dim * 2 * s_h4 * s_w4, name='g_lin_h1',
                     batch_norm=True, activation_fn=tf.nn.relu)
         h1 = tf.reshape(h1, [self.batch_size, s_h4, s_w4, self.gf_dim * 2])
-        print('h1', h1.get_shape())
-        print('yb', yb.get_shape())
         h1 = conv_cond_concat(h1, yb)
 
         h2 = deconv2d_layer(h1, [self.batch_size, s_h2, s_w2, self.gf_dim * 2], name='g_deconv_h2')
@@ -353,16 +349,16 @@ class UnifiedDCGANModel(BaseModel):
         ##############################
         # Define the optimizers
         if self.model_type == 'gan':
-            d_optim = tf.train.AdamOptimizer(config.learning_rate, beta1=config.beta1) \
+            d_optim = tf.train.AdamOptimizer(config.d_lr, beta1=config.beta1) \
                 .minimize(self.d_loss, var_list=self.d_vars)
-            g_optim = tf.train.AdamOptimizer(config.learning_rate, beta1=config.beta1) \
+            g_optim = tf.train.AdamOptimizer(config.g_lr, beta1=config.beta1) \
                 .minimize(self.g_loss, var_list=self.g_vars)
 
         elif self.model_type == 'wgan':
             # Wasserstein GAN
-            d_optim = tf.train.RMSPropOptimizer(config.learning_rate) \
+            d_optim = tf.train.RMSPropOptimizer(config.d_lr) \
                 .minimize(self.d_loss, var_list=self.d_vars)
-            g_optim = tf.train.RMSPropOptimizer(config.learning_rate) \
+            g_optim = tf.train.RMSPropOptimizer(config.g_lr) \
                 .minimize(self.g_loss, var_list=self.g_vars)
 
             # After every gradient update on the discriminator model, clamp its weights to a
@@ -372,10 +368,10 @@ class UnifiedDCGANModel(BaseModel):
 
         elif self.model_type == 'wgan-gp':
             d_optim = tf.train.AdamOptimizer(
-                config.learning_rate, beta1=config.beta1, beta2=config.beta2) \
+                config.d_lr, beta1=config.beta1, beta2=config.beta2) \
                 .minimize(self.d_loss, var_list=self.d_vars)
             g_optim = tf.train.AdamOptimizer(
-                config.learning_rate, beta1=config.beta1, beta2=config.beta2) \
+                config.g_lr, beta1=config.beta1, beta2=config.beta2) \
                 .minimize(self.g_loss, var_list=self.g_vars)
 
         self.sess.run(tf.global_variables_initializer())
@@ -418,7 +414,6 @@ class UnifiedDCGANModel(BaseModel):
 
             for _ in range(_d_iters):
                 epoch, step, d_train_feed_dict, g_train_feed_dict = next(train_data_generator)
-                print(epoch, step, d_train_feed_dict[self.inputs].shape)
                 self.sess.run(d_optim, feed_dict=d_train_feed_dict)
                 if d_clip is not None:
                     self.sess.run(d_clip)
@@ -435,7 +430,7 @@ class UnifiedDCGANModel(BaseModel):
                 d_err = self.d_loss.eval(d_train_feed_dict)
                 g_err = self.g_loss.eval(g_train_feed_dict)
 
-            if np.mod(iter_count, 1) == 0:
+            if np.mod(iter_count, 10) == 0:
                 print("Iter: %d Epoch: %d [%d/%d] time: %4.4f, d_loss: %.8f, g_loss: %.8f" % (
                     iter_count, epoch, d_counter, g_counter, time.time() - start_time, d_err,
                     g_err))
