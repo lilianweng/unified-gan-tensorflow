@@ -19,6 +19,7 @@ import zipfile
 import requests
 from six.moves import urllib
 from tqdm import tqdm
+from gan.utils.misc import REPO_ROOT
 
 
 def download(url, dirpath):
@@ -158,8 +159,8 @@ def download_dataset_from_url(data_dir, url_fmt, file_names):
         subprocess.call(cmd)
 
 
-def prepare_dataset_dir(dataset_name, base_path='./data'):
-    data_dir = os.path.join(base_path, dataset_name)
+def prepare_dataset_dir(dataset_name, folder_name='data'):
+    data_dir = os.path.join(REPO_ROOT, folder_name, dataset_name)
     if not os.path.exists(data_dir):
         os.makedirs(data_dir, exist_ok=True)
     elif click.confirm("Overwrite %s?" % data_dir, abort=True):
@@ -181,12 +182,13 @@ def main(name):
         ['celebA', 'lsun', 'mnist', 'fashion-mnist']
     """
     assert name in ['celebA', 'lsun', 'mnist', 'fashion-mnist']
-    data_dir = prepare_dataset_dir(name)
+    prepare_dataset_dir(name)
+    data_dir = os.path.join(REPO_ROOT, name)
 
     if name == 'celebA':
-        download_celeb_a('./data')
+        download_celeb_a(data_dir)
     elif name == 'lsun':
-        download_lsun('./data')
+        download_lsun(data_dir)
     elif name == 'mnist':
         url_fmt = 'http://yann.lecun.com/exdb/mnist/{}'
         file_names = ['train-images-idx3-ubyte.gz',

@@ -1,9 +1,7 @@
 """
 Recommendeds configs:
 
---model_type=gan --learning_rate=0.0002
---model_type=wgan --learning_rate=0.00005 --beta1=0.9
---model_type=wgan-gp --learning_rate=0.0001 --beta1=0.5 --beta2=0.9
+TBA.
 """
 from __future__ import print_function
 import pprint
