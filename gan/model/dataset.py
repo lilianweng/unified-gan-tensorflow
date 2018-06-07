@@ -1,5 +1,5 @@
 from __future__ import print_function
-
+import click
 import glob
 import gzip
 import os
@@ -37,10 +37,14 @@ class Dataset:
     def exists(self):
         return os.path.exists(self.data_dir)
 
+    def _load(self, *args, **kwargs):
+        raise NotImplementedError()
+
     def load(self, *args, **kwargs):
         """Load data and check the channel number `c_dim`.
         """
-        raise NotImplementedError()
+        self._load(*args, **kwargs)
+        click.secho(" [*] Dataset '%s' loaded." % self.name, fg="green")
 
     def sample(self, num_samples):
         raise NotImplementedError()
@@ -85,7 +89,7 @@ class SimpleDataset(Dataset):
     """No classes; just a bunch of images.
     """
 
-    def load(self, image_name_pattern='*.png'):
+    def _load(self, image_name_pattern='*.png'):
         # Only save the image file names, as loading them all into the memory might be too much.
         self.data = glob.glob(os.path.join(self.data_dir, image_name_pattern))
         self._check_image_attrs(imread(self.data[0]))
@@ -138,17 +142,14 @@ class MnistDataset(Dataset):
     """
 
     def __init__(self, name, y_dim=10, **kwargs):
+        assert name in ['mnist', 'fashion-mnist']
         super().__init__(name, **kwargs)
 
         self.y_dim = y_dim  # depends on the dataset.
         self.data_y = None  # will be loaded by self.load()
 
-    def load(self):
-        if self.name in ['mnist', 'fashion-mnist']:
-            self.data, self.data_y = self._load_mnist()
-        else:
-            raise NotImplementedError()
-
+    def _load(self):
+        self.data, self.data_y = self._load_mnist()
         self._check_image_attrs(self.data[0])
 
     def sample(self, num_samples):

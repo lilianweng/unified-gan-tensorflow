@@ -9,7 +9,7 @@ import tensorflow as tf
 from gan.model.base import BaseModel
 from gan.model.dataset import Dataset
 from gan.utils.tf_ops import conv_cond_concat, conv2d_layer, deconv2d_layer, linear
-from gan.utils.misc import save_images, image_manifold_size
+from gan.utils.misc import save_images, image_manifold_size, REPO_ROOT
 
 
 class UnifiedDCGANModel(BaseModel):
@@ -20,9 +20,8 @@ class UnifiedDCGANModel(BaseModel):
                  batch_size=64, sample_num=64,
                  z_dim=100, gf_dim=64, df_dim=64,
                  gfc_dim=1024, dfc_dim=1024,
-                 d_clip_limit=0.01, d_iter=5, gp_lambda=10.,
-                 l2_reg_scale=None,
-                 checkpoint_dir=None, sample_dir=None):
+                 d_clip_limit=0.01, d_iter=5, gp_lambda=10., l2_reg_scale=None,
+                 checkpoint_dir='checkpoints', sample_dir='samples'):
         """
         Construct a model object.
 
@@ -79,10 +78,10 @@ class UnifiedDCGANModel(BaseModel):
 
         # For generating sample images.
         self.sample_num = sample_num
-        self.sample_dir = os.path.join(sample_dir, self.model_name)
+        self.sample_dir = os.path.join(REPO_ROOT, sample_dir, self.model_name)
         os.makedirs(self.sample_dir, exist_ok=True)
 
-        super().__init__(self.model_name, checkpoint_dir=checkpoint_dir)
+        super().__init__(checkpoint_dir=checkpoint_dir)
 
         self.build_model()
 
@@ -94,150 +93,6 @@ class UnifiedDCGANModel(BaseModel):
             self.batch_size,
             int(time.time())
         )
-
-    def get_sample_data(self):
-        """Set up the inputs and labels of sample images.
-        Samples are created periodically during training.
-        """
-        sample_feed_dict = {}
-        if self.y_dim is None:
-            sample_inputs = self.dataset.sample(self.sample_num)
-        else:
-            sample_inputs, sample_labels = self.dataset.sample(self.sample_num)
-            sample_feed_dict.update({self.y: sample_labels})
-
-        sample_z = np.random.uniform(-1, 1, size=(self.sample_num, self.z_dim))
-        sample_feed_dict.update({
-            self.z: sample_z,
-            self.inputs: sample_inputs,
-        })
-
-        return sample_feed_dict
-
-    def get_next_batch(self):
-        """Loop through batches for infinite epoches.
-        """
-        for batch in self.dataset.next_batch(self.batch_size):
-            # The `batch` is a tuple of (epoch, step, images) or (epoch, step, images, labels)
-            z = np.random.uniform(-1, 1, [self.batch_size, self.z_dim]).astype(np.float32)
-            epoch, step, images = batch[:2]
-
-            d_train_feed_dict = {self.inputs: images, self.z: z}
-            g_train_feed_dict = {self.z: z}
-
-            if self.y is not None:
-                labels = batch[3]
-                d_train_feed_dict.update({self.y: labels})
-                g_train_feed_dict.update({self.y: labels})
-            yield epoch, step, d_train_feed_dict, g_train_feed_dict
-
-    def train(self, config):
-        """Train the model!
-        """
-        d_clip = None
-
-        ##############################
-        # Define the optimizers
-        if self.model_type == 'gan':
-            d_optim = tf.train.AdamOptimizer(config.learning_rate, beta1=config.beta1) \
-                .minimize(self.d_loss, var_list=self.d_vars)
-            g_optim = tf.train.AdamOptimizer(config.learning_rate, beta1=config.beta1) \
-                .minimize(self.g_loss, var_list=self.g_vars)
-
-        elif self.model_type == 'wgan':
-            # Wasserstein GAN
-            d_optim = tf.train.RMSPropOptimizer(config.learning_rate) \
-                .minimize(self.d_loss, var_list=self.d_vars)
-            g_optim = tf.train.RMSPropOptimizer(config.learning_rate) \
-                .minimize(self.g_loss, var_list=self.g_vars)
-
-            # After every gradient update on the discriminator model, clamp its weights to a
-            # small fixed range, [-d_clip_limit, d_clip_limit].
-            d_clip = tf.group(*[v.assign(tf.clip_by_value(
-                v, -self.d_clip_limit, self.d_clip_limit)) for v in self.d_vars])
-
-        elif self.model_type == 'wgan-gp':
-            d_optim = tf.train.AdamOptimizer(
-                config.learning_rate, beta1=config.beta1, beta2=config.beta2) \
-                .minimize(self.d_loss, var_list=self.d_vars)
-            g_optim = tf.train.AdamOptimizer(
-                config.learning_rate, beta1=config.beta1, beta2=config.beta2) \
-                .minimize(self.g_loss, var_list=self.g_vars)
-
-        self.sess.run(tf.global_variables_initializer())
-
-        # Set up the sample images
-        sample_feed_dict = self.get_sample_data()
-        # Create a sample image every `sample_every_step` steps.
-        sample_every_step = int(config.max_iter // 20)
-
-        start_time = time.time()
-        could_load, checkpoint_counter = self.load_model()
-
-        counter = 1  # Count how many batches we have processed.
-        d_counter = 0  # Count number of batches used for training D
-        g_counter = 0  # Count number of batches used for training G
-
-        if could_load:
-            counter = checkpoint_counter
-            click.secho(" [*] Load SUCCESS", color='green')
-        else:
-            click.secho(" [!] Load failed...", color="red")
-
-        ##############################
-        # Start training!
-
-        train_data_generator = self.get_next_batch(config)
-
-        for iter_count in range(config.max_iter):
-            _d_iters = 1
-
-            if self.model_type in ('wgan', 'wgan-gp'):
-                # For 'wgan' or 'wgan-gp', we are allowed to train the D network to be very good
-                # at the beginning as a warm start. Because theoretically Wasserstain distance
-                # does not suffer the vanishing gradient dilemma that vanila GAN is facing.
-                _d_iters = 100 if iter_count < 25 or np.mod(iter_count, 500) == 0 else self.d_iter
-
-            # Update D network
-            counter += _d_iters
-            d_counter += _d_iters
-
-            for _ in range(_d_iters):
-                epoch, step, d_train_feed_dict, g_train_feed_dict = next(train_data_generator)
-                self.sess.run(d_optim, feed_dict=d_train_feed_dict)
-                if d_clip is not None:
-                    self.sess.run(d_clip)
-
-            summary_str = self.sess.run(self.d_sum, feed_dict=d_train_feed_dict)
-            self.writer.add_summary(summary_str, iter_count)
-
-            # Update G network
-            g_counter += 1
-            _, summary_str = self.sess.run([g_optim, self.g_sum], feed_dict=g_train_feed_dict)
-            self.writer.add_summary(summary_str, iter_count)
-
-            with self.sess.as_default():
-                d_err = self.d_loss.eval(d_train_feed_dict)
-                g_err = self.g_loss.eval(g_train_feed_dict)
-
-            if np.mod(iter_count, 100) == 0:
-                print("Iter: %d Epoch: %d [%d/%d] time: %4.4f, d_loss: %.8f, g_loss: %.8f" % (
-                    iter_count, epoch, d_counter, g_counter, time.time() - start_time, d_err,
-                    g_err))
-
-            if np.mod(iter_count, sample_every_step) == 1:
-                samples, d_loss, g_loss = self.sess.run(
-                    [self.sampler, self.d_loss, self.g_loss],
-                    feed_dict=sample_feed_dict
-                )
-
-                image_path = os.path.join(self.sample_dir,
-                                          "train_{:02d}_{:04d}.png".format(epoch, step))
-                save_images(samples, image_manifold_size(samples.shape[0]), image_path)
-                print("[Sample] d_loss: %.8f, g_loss: %.8f" % (d_loss, g_loss))
-
-                # Save the model.
-                self.save_model(step=counter)
 
     def build_model(self):
         self.inputs = tf.placeholder(
@@ -316,8 +171,8 @@ class UnifiedDCGANModel(BaseModel):
             self.d_loss = tf.reduce_mean(self.d_loss + self.d_reg * self.l2_reg_scale)
 
         # Add various tf.summary variables.
-        self.d_loss_real_sum = tf.summary.scalar("d_loss_real", self.d_loss_real)
-        self.d_loss_fake_sum = tf.summary.scalar("d_loss_fake", self.d_loss_fake)
+        self.d_loss_real_sum = tf.summary.scalar("d_loss/real", self.d_loss_real)
+        self.d_loss_fake_sum = tf.summary.scalar("d_loss/fake", self.d_loss_fake)
 
         self.g_loss_sum = tf.summary.scalar("g_loss", self.g_loss)
         self.d_loss_sum = tf.summary.scalar("d_loss", self.d_loss)
@@ -341,10 +196,10 @@ class UnifiedDCGANModel(BaseModel):
         self.g_summary = tf.summary.merge(g_sum_list)
         self.d_summary = tf.summary.merge(d_sum_list)
 
-    def discriminator(self, image, y=None, reuse=False):
+    def discriminator(self, image, y=None, reuse=False, scope_name="discriminator"):
         """Defines the D network structure.
         """
-        with tf.variable_scope("discriminator") as scope:
+        with tf.variable_scope(scope_name) as scope:
             if reuse:
                 scope.reuse_variables()
 
@@ -385,10 +240,13 @@ class UnifiedDCGANModel(BaseModel):
 
         return tf.nn.sigmoid(h3), h3
 
-    def generator(self, z, y=None):
+    def generator(self, z, y=None, scope_name="generator", reuse=False):
         """Defines the G network structure.
         """
-        with tf.variable_scope("generator"):
+        with tf.variable_scope(scope_name, reuse=reuse) as scope:
+            if reuse:
+                scope.reuse_variables()
+
             if not self.y_dim:
                 return self._generator(z)
             else:
@@ -427,12 +285,17 @@ class UnifiedDCGANModel(BaseModel):
         yb = tf.reshape(y, [self.batch_size, 1, 1, self.y_dim])
         z = tf.concat([z, y], 1)
 
-        h0 = linear(z, self.gfc_dim, 'g_lin_h0', batch_norm=True, activation_fn=tf.nn.relu)
+        h0 = linear(z, self.gfc_dim, name='g_lin_h0', batch_norm=True, activation_fn=tf.nn.relu)
+        print('z', z.get_shape())
+        print('h0', h0.get_shape())
+        print('y', y.get_shape())
         h0 = tf.concat([h0, y], 1)
 
-        h1 = linear(h0, self.gf_dim * 2 * s_h4 * s_w4, 'g_lin_h1',
+        h1 = linear(h0, self.gf_dim * 2 * s_h4 * s_w4, name='g_lin_h1',
                     batch_norm=True, activation_fn=tf.nn.relu)
         h1 = tf.reshape(h1, [self.batch_size, s_h4, s_w4, self.gf_dim * 2])
+        print('h1', h1.get_shape())
+        print('yb', yb.get_shape())
         h1 = conv_cond_concat(h1, yb)
 
         h2 = deconv2d_layer(h1, [self.batch_size, s_h2, s_w2, self.gf_dim * 2], name='g_deconv_h2')
@@ -444,6 +307,149 @@ class UnifiedDCGANModel(BaseModel):
         return tf.nn.sigmoid(h3)
 
     def sampler(self, z, y=None):
-        with tf.variable_scope("generator") as scope:
-            scope.reuse_variables()
-            return self.generator(z, y=y)
+        return self.generator(z, y=y, reuse=True)
+
+    def get_sample_data(self):
+        """Set up the inputs and labels of sample images.
+        Samples are created periodically during training.
+        """
+        sample_feed_dict = {}
+        if self.y_dim is None:
+            sample_inputs = self.dataset.sample(self.sample_num)
+        else:
+            sample_inputs, sample_labels = self.dataset.sample(self.sample_num)
+            sample_feed_dict.update({self.y: sample_labels})
+
+        sample_z = np.random.uniform(-1, 1, size=(self.sample_num, self.z_dim))
+        sample_feed_dict.update({
+            self.z: sample_z,
+            self.inputs: sample_inputs,
+        })
+
+        return sample_feed_dict
+
+    def get_next_batch(self):
+        """Loop through batches for infinite epoches.
+        """
+        for batch in self.dataset.next_batch(self.batch_size):
+            # The `batch` is a tuple of (epoch, step, images) or (epoch, step, images, labels)
+            z = np.random.uniform(-1, 1, [self.batch_size, self.z_dim]).astype(np.float32)
+            epoch, step, images = batch[:3]
+
+            d_train_feed_dict = {self.inputs: images, self.z: z}
+            g_train_feed_dict = {self.z: z}
+
+            if self.y is not None:
+                labels = batch[3]
+                d_train_feed_dict.update({self.y: labels})
+                g_train_feed_dict.update({self.y: labels})
+            yield epoch, step, d_train_feed_dict, g_train_feed_dict
+
+    def train(self, config):
+        """Train the model!
+        """
+        d_clip = None
+
+        ##############################
+        # Define the optimizers
+        if self.model_type == 'gan':
+            d_optim = tf.train.AdamOptimizer(config.learning_rate, beta1=config.beta1) \
+                .minimize(self.d_loss, var_list=self.d_vars)
+            g_optim = tf.train.AdamOptimizer(config.learning_rate, beta1=config.beta1) \
+                .minimize(self.g_loss, var_list=self.g_vars)
+
+        elif self.model_type == 'wgan':
+            # Wasserstein GAN
+            d_optim = tf.train.RMSPropOptimizer(config.learning_rate) \
+                .minimize(self.d_loss, var_list=self.d_vars)
+            g_optim = tf.train.RMSPropOptimizer(config.learning_rate) \
+                .minimize(self.g_loss, var_list=self.g_vars)
+
+            # After every gradient update on the discriminator model, clamp its weights to a
+            # small fixed range, [-d_clip_limit, d_clip_limit].
+            d_clip = tf.group(*[v.assign(tf.clip_by_value(
+                v, -self.d_clip_limit, self.d_clip_limit)) for v in self.d_vars])
+
+        elif self.model_type == 'wgan-gp':
+            d_optim = tf.train.AdamOptimizer(
+                config.learning_rate, beta1=config.beta1, beta2=config.beta2) \
+                .minimize(self.d_loss, var_list=self.d_vars)
+            g_optim = tf.train.AdamOptimizer(
+                config.learning_rate, beta1=config.beta1, beta2=config.beta2) \
+                .minimize(self.g_loss, var_list=self.g_vars)
+
+        self.sess.run(tf.global_variables_initializer())
+
+        # Set up the sample images
+        sample_feed_dict = self.get_sample_data()
+        # Create a sample image every `sample_every_step` steps.
+        sample_every_step = int(config.max_iter // 20)
+
+        start_time = time.time()
+        could_load, checkpoint_counter = self.load_model()
+
+        counter = 1  # Count how many batches we have processed.
+        d_counter = 0  # Count number of batches used for training D
+        g_counter = 0  # Count number of batches used for training G
+
+        if could_load:
+            counter = checkpoint_counter
+            click.secho(" [*] Load SUCCESS", fg='green')
+        else:
+            click.secho(" [!] Load failed...", fg="red")
+
+        ##############################
+        # Start training!
+
+        train_data_generator = self.get_next_batch()
+
+        for iter_count in range(config.max_iter):
+            _d_iters = 1
+
+            if self.model_type in ('wgan', 'wgan-gp'):
+                # For 'wgan' or 'wgan-gp', we are allowed to train the D network to be very good
+                # at the beginning as a warm start. Because theoretically Wasserstain distance
+                # does not suffer the vanishing gradient dilemma that vanila GAN is facing.
+                _d_iters = 100 if iter_count < 25 or np.mod(iter_count, 500) == 0 else self.d_iter
+
+            # Update D network
+            counter += _d_iters
+            d_counter += _d_iters
+
+            for _ in range(_d_iters):
+                epoch, step, d_train_feed_dict, g_train_feed_dict = next(train_data_generator)
+                print(epoch, step, d_train_feed_dict[self.inputs].shape)
+                self.sess.run(d_optim, feed_dict=d_train_feed_dict)
+                if d_clip is not None:
+                    self.sess.run(d_clip)
+
+            summary_str = self.sess.run(self.d_summary, feed_dict=d_train_feed_dict)
+            self.writer.add_summary(summary_str, iter_count)
+
+            # Update G network
+            g_counter += 1
+            _, summary_str = self.sess.run([g_optim, self.g_summary], feed_dict=g_train_feed_dict)
+            self.writer.add_summary(summary_str, iter_count)
+
+            with self.sess.as_default():
+                d_err = self.d_loss.eval(d_train_feed_dict)
+                g_err = self.g_loss.eval(g_train_feed_dict)
+
+            if np.mod(iter_count, 1) == 0:
+                print("Iter: %d Epoch: %d [%d/%d] time: %4.4f, d_loss: %.8f, g_loss: %.8f" % (
+                    iter_count, epoch, d_counter, g_counter, time.time() - start_time, d_err,
+                    g_err))
+
+            if np.mod(iter_count, sample_every_step) == 1:
+                samples, d_loss, g_loss = self.sess.run(
+                    [self.sampler, self.d_loss, self.g_loss],
+                    feed_dict=sample_feed_dict
+                )
+
+                image_path = os.path.join(self.sample_dir,
+                                          "train_{:02d}_{:04d}.png".format(epoch, step))
+                save_images(samples, image_manifold_size(samples.shape[0]), image_path)
+                print("[Sample] d_loss: %.8f, g_loss: %.8f" % (d_loss, g_loss))
+
+                # Save the model.
+                # self.save_model(step=counter)

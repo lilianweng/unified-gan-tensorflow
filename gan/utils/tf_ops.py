@@ -13,7 +13,7 @@ def conv_cond_concat(x, y):
     """
     x_shapes = x.get_shape().as_list()
     y_shapes = y.get_shape().as_list()
-    return tf.concat([x, y * tf.ones(x_shapes[:2] + [y_shapes[3]])], 3)
+    return tf.concat([x, y * tf.ones(x_shapes[:3] + [y_shapes[3]])], 3)
 
 
 def linear(inputs, output_size, name='linear', batch_norm=False, activation_fn=None,
@@ -113,5 +113,5 @@ def deconv2d_layer(inputs, output_shape,
 
         if return_w:
             return deconv, w, b
-        else:
-            return deconv
+
+        return deconv
