@@ -85,7 +85,7 @@ class BaseModel:
     def sess(self):
         if self._sess is None:
             config = tf.ConfigProto()
-
+            config.gpu_options.allow_growth = True
             config.intra_op_parallelism_threads = 2
             config.inter_op_parallelism_threads = 2
             self._sess = tf.Session(config=config)

@@ -202,7 +202,7 @@ def main(name):
                       't10k-labels-idx1-ubyte.gz']
         download_dataset_from_url(data_dir, url_fmt, file_names)
     elif name == 'pokemon':
-        pass
+        raise NotImplementedError()
 
 
 if __name__ == '__main__':

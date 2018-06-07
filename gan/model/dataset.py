@@ -15,6 +15,13 @@ BASE_DATA_DIR = 'data'
 class Dataset:
     def __init__(self, name, in_height=None, in_width=None,
                  out_height=None, out_width=None, crop=True, **kwargs):
+        """
+        Args:
+        - input_height (int)
+        - input_width (int)
+        - crop (bool): If True, crop the images in the center if the output size is smaller;
+            otherwise, resize.
+        """
         self.name = name
         self.data_dir = os.path.join(REPO_ROOT, BASE_DATA_DIR, self.name)
 
@@ -25,6 +32,7 @@ class Dataset:
         self.crop = crop
 
         self.data = None  # will be loaded by self.load()
+        self._img_dims = None
 
     def exists(self):
         return os.path.exists(self.data_dir)
@@ -34,12 +42,22 @@ class Dataset:
         """
         raise NotImplementedError()
 
+    def sample(self, num_samples):
+        raise NotImplementedError()
+
+    def is_loaded(self):
+        return all(x is not None for x in [
+            self.data,
+            self.in_width, self.in_height,
+            self.out_width, self.out_height,
+        ])
+
     def next_batch(self, batch_size):
         """Loop through batches for infinite epoches.
         """
         raise NotImplementedError()
 
-    def _check_img_attrs(self, img):
+    def _check_image_attrs(self, img):
         # read the color channel number
         self.c_dim = img.shape[-1] if len(img.shape) >= 3 else 1  # channel number (int)
         self.grayscale = (self.c_dim == 1)  # whether in grayscale (bool)
@@ -52,6 +70,16 @@ class Dataset:
         if self.out_height is None:
             self.out_height = self.in_height
 
+    @property
+    def image_dims(self):
+        if self._img_dims is None:
+            if self.crop:
+                self._img_dims = [self.out_height, self.out_width, self.c_dim]
+            else:
+                self._img_dims = [self.in_height, self.in_width, self.c_dim]
+
+        return self._img_dims
+
 
 class SimpleDataset(Dataset):
     """No classes; just a bunch of images.
@@ -60,7 +88,29 @@ class SimpleDataset(Dataset):
     def load(self, image_name_pattern='*.png'):
         # Only save the image file names, as loading them all into the memory might be too much.
         self.data = glob.glob(os.path.join(self.data_dir, image_name_pattern))
-        self._check_img_attrs(imread(self.data[0]))
+        self._check_image_attrs(imread(self.data[0]))
+
+    def _load_images(self, file_names):
+        images = [get_image(
+            batch_file,
+            input_height=self.in_height,
+            input_width=self.in_width,
+            resize_height=self.out_height,
+            resize_width=self.out_width,
+            crop=self.crop,
+            grayscale=self.grayscale
+        ) for batch_file in file_names]
+
+        if self.grayscale:
+            images = np.array(images).astype(np.float32)[:, :, :, None]
+        else:
+            images = np.array(images).astype(np.float32)
+
+        return images
+
+    def sample(self, num_samples):
+        sample_files = random.sample(self.data, num_samples)
+        return self._load_images(sample_files)
 
     def _next_batch_per_epoch(self, batch_size):
         """Yields next mini-batch within one epoch.
@@ -69,21 +119,7 @@ class SimpleDataset(Dataset):
 
         for batch_idx in range(num_batches):
             batch_files = self.data[batch_idx * batch_size:(batch_idx + 1) * batch_size]
-            batch = [get_image(
-                batch_file,
-                input_height=self.in_height,
-                input_width=self.in_width,
-                resize_height=self.out_height,
-                resize_width=self.out_width,
-                crop=self.crop,
-                grayscale=self.grayscale
-            ) for batch_file in batch_files]
-
-            if self.grayscale:
-                batch_images = np.array(batch).astype(np.float32)[:, :, :, None]
-            else:
-                batch_images = np.array(batch).astype(np.float32)
-
+            batch_images = self._load_images(batch_files)
             yield batch_idx, batch_images
 
     def next_batch(self, batch_size):
@@ -113,7 +149,11 @@ class MnistDataset(Dataset):
         else:
             raise NotImplementedError()
 
-        self._check_img_attrs(self.data[0])
+        self._check_image_attrs(self.data[0])
+
+    def sample(self, num_samples):
+        indices = random.sample(range(self.data.shape[0]), num_samples)
+        return self.data[indices], self.data_y[indices]
 
     def _next_batch_per_epoch(self, batch_size):
         num_batches = len(self.data) // batch_size
@@ -163,3 +203,10 @@ class MnistDataset(Dataset):
         X /= 255.
 
         return X, y_vec
+
+
+def load_dataset(name):
+    if name in ('mnist', 'fashion-mnist'):
+        return MnistDataset(name)
+
+    return SimpleDataset(name)
