@@ -2,3 +2,5 @@ numpy
 Pillow
 scipy
 tensorflow>=1.2.1
+requests
+tqdm
